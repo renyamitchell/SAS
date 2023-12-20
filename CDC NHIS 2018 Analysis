@@ -1,0 +1,101 @@
+# This file is code which examines the relationship between income level and flu vaccination among adults in the U.S. using the CDC National Health Interview survey from 2018
+
+libname rm "C:\Users\renya\Downloads";
+run;
+
+/*PART 1*/
+data rm.familyadult;
+ merge rm.nhis2018family  rm.nhis2018samadult (in=inxxadult); 
+ by hhx fmx;
+ if inxxadult;
+run;
+
+proc freq data=rm.familyadult;
+tables incgrp5 FLUVACYR ; run;
+
+proc freq data=rm.familyadult;
+tables incgrp5*FLUVACYR; run;
+
+# Delete any values of "undefined" (INCGRP5), "unknown" (INCGRP5), "refused" to answer (FLUVACYR), "not ascertained" (FLUVACYR), and "don’t know" so that they don't skew the analysis
+data rm.familyadultrev;
+set rm.familyadult;
+if incgrp5 = 96 then delete;
+if incgrp5 = 99 then delete;
+if FLUVACYR = 7 then delete;
+if FLUVACYR = 8 then delete;
+if FLUVACYR = 9 then delete;
+if RACERPI2= 05 then delete;
+if HISPAN_I= 07 then delete;
+if HISPAN_I= 08 then delete;
+if HISPAN_I= 10 then delete;
+if HISPAN_I= 11 then delete;
+if HISPAN_I = 00 then HISPANIC = 1;
+if HISPAN_I = 01 then HISPANIC = 1;
+if HISPAN_I = 02 then HISPANIC = 1;
+if HISPAN_I = 03 then HISPANIC = 1;
+if HISPAN_I = 04 then HISPANIC = 1;
+if HISPAN_I = 06 then HISPANIC = 1;
+if HISPAN_I = 09 then HISPANIC = 1;
+if HISPAN_I = 12 then HISPANIC = 0;
+if 18 < age_p <= 24 then age_cat= 1;
+if 24 < age_p <= 34 then age_cat= 2;
+if 34 < age_p <= 44 then age_cat= 3;
+if 44 < age_p <= 54 then age_cat= 4;
+if 54 < age_p <= 64 then age_cat= 5;
+if 64 < age_p <= 74 then age_cat= 6;
+if 74 < age_p <= 84 then age_cat= 7;
+if age_p >=85 then age_cat= 8;
+if copdev= 7 then delete;
+if copdev= 8 then delete;
+if copdev= 9 then delete;
+run;
+
+proc freq data=rm.familyadultrev;
+tables incgrp5*FLUVACYR; run;
+
+proc freq data=rm.familyadultrev;
+tables incgrp5*RACERPI2; run;
+
+proc freq data=rm.familyadultrev;
+tables incgrp5*HISPANIC; run;
+
+proc freq data=rm.familyadultrev;
+tables incgrp5*Age_cat; run;
+
+proc freq data=rm.familyadultrev;
+tables incgrp5*sex; run;
+
+proc freq data=rm.familyadultrev;
+tables FLUVACYR*RACERPI2; run;
+
+proc freq data=rm.familyadultrev;
+tables FLUVACYR*HISPANIC; run;
+
+proc freq data=rm.familyadultrev;
+tables FLUVACYR*Age_cat; run;
+
+proc freq data=rm.familyadultrev;
+tables FLUVACYR*sex; run;
+
+proc freq data=rm.familyadultrev;
+tables FLUVACYR*copdev; run;
+
+/*PART 2*/
+
+# unadjusted model: analyze the relationship between the exposure and the outcome, family annual income group and flu vaccination status
+Proc logistic data = rm.familyadultrev ; class INCGRP5 (ref = '1') /*0-$34999*/  /param=ref;
+MODEL FLUVACYR (EVENT='1') =  incgrp5 / CLODDS=WALD;  
+run;
+
+# Fully adjusted model: Adjust for potential confounders sex, race, age, Hispanic or non-Hispanic origin
+Proc logistic data = rm.familyadultrev;
+class age_cat (ref = '1') /*18-24*/ sex (ref = '1') /*Male*/ Hispanic (ref = '0') /*not Hispanic*/ racerpi2 (ref = '1') /*white only*/ INCGRP5 (ref = '1') /*0-$34999*/ copdev (ref = '2') /param=ref;
+MODEL FLUVACYR (EVENT='1') =  incgrp5 age_cat sex Hispanic racerpi2 copdev/ CLODDS=WALD;  
+run;
+
+# fully adjusted model with interaction term for effect modifier, heterogeneity of effect method using an interaction term w oddsratio statement
+Proc logistic data = rm.familyadultrev;
+class age_cat (ref = '1') /*18-24*/ Hispanic (ref = '0') INCGRP5 (ref = '1') /*0-$34999*/ sex racerpi2 copdev (ref = '2') /param=ref;
+MODEL FLUVACYR (EVENT='1') =  incgrp5 age_cat Hispanic  sex racerpi2 copdev incgrp5*copdev/ CLODDS=WALD;
+ODDSRATIO incgrp5 / DIFF=REF;
+run;
