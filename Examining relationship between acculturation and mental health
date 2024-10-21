@@ -1,0 +1,193 @@
+libname rm "C:\Users\renya\Downloads";
+run;
+
+/*Sort data before merging sets*/
+PROC SORT DATA=rm.Demo_j; BY SEQN; RUN;
+PROC SORT DATA=rm.Acq_j; BY SEQN; RUN;
+PROC SORT DATA=rm.Alq_j; BY SEQN; RUN;
+PROC SORT DATA=rm.Duq_j; BY SEQN; RUN;
+PROC SORT DATA=rm.Dpq_j; BY SEQN; RUN;
+PROC SORT DATA=rm.hiq_j; BY SEQN; RUN;
+PROC SORT DATA=rm.Hsq_j; BY SEQN; RUN;
+PROC SORT DATA=rm.Huq_j; BY SEQN; RUN;
+
+DATA rm.merged_data;
+    MERGE rm.demo_j (IN=a)
+          rm.dpq_j (IN=b)
+          rm.acq_j (IN=c)
+          rm.hsq_j (IN=d)
+          rm.alq_j (IN=e)
+          rm.duq_j (IN=f)
+          rm.hiq_j (IN=g)
+          rm.huq_j (IN=h);
+    BY SEQN;
+	/* Keep only records that appear in all datasets if needed*/
+    IF a AND b AND c AND d AND e AND f AND g AND h;
+RUN;
+
+/*inspecting the merged dataset*/
+PROC CONTENTS DATA=rm.merged_data; RUN;
+
+/*distribution of exposures and outcome prior to cleaning, dichotomizing outcome variable, and combining exposure variables*/
+proc freq data = rm.merged_data;
+tables DPQ020*ACD040; run;
+
+proc freq data = rm.merged_data;
+tables DPQ020*ACD110; run;
+
+proc freq data = rm.merged_data;
+tables DPQ020*ACD011A; run;
+
+proc freq data = rm.merged_data;
+tables DPQ020*ACD011B; run;
+
+proc freq data = rm.merged_data;
+tables DPQ020*ACD011C; run;
+
+DATA rm.cleaned_data
+(keep = DMDBORN4 RIDAGEYR RIAGENDR DMDHREDZ DMDYRSUS DMDHRMAZ HUQ030 HIQ011 DUQ240 HSD010 
+ EXPOSURE DEPRESSION income_category alcohol_consumption housesize);
+    SET rm.merged_data;
+	LENGTH housesize $2 Alcohol_Consumption $30;
+ 	IF DMDBORN4 IN (1, 77, 99, .) THEN DELETE;
+ 	IF RIDAGEYR = . THEN DELETE;
+ 	IF RIAGENDR = . THEN DELETE;
+ 	IF INDFMIN2 IN (77, 99) THEN INDFMIN2 = .;
+    IF DMDHREDZ IN (7, 9) THEN DMDHREDZ = .;
+    IF DMDYRSUS IN (77, 99) THEN DMDYRSUS = .;
+    IF DMDHRMAZ IN (77, 99) THEN DMDHRMAZ = .;
+  	if DMDHHSIZ = 1 then housesize = '1';
+    else if DMDHHSIZ = 2 then housesize = '2';
+    else if DMDHHSIZ >= 3 then housesize = '3+';
+    IF HUQ030 IN (7, 9) THEN HUQ030 = .;
+    IF HIQ011 IN (7, 9) THEN HIQ011 = .;
+    IF DUQ240 IN (7, 9) THEN DUQ240 = .;
+    IF ALQ130 IN (777, 999) THEN ALQ130 = .;
+    IF HSD010 IN (7, 9) THEN HSD010 = .;
+    IF DPQ020 IN (7, 9) THEN DPQ020 = .;
+    /* Create the 'Exposure' variable */
+    IF NOT MISSING(ACD011A) THEN Exposure = '1'; /* English */
+    ELSE IF NOT MISSING(ACD011B) THEN Exposure = '2'; /* Other */
+    ELSE IF NOT MISSING(ACD011C) THEN Exposure = '2'; /* Other */;
+    
+    /* Hispanic participants (ACD040) */
+    IF ACD040 IN (1, 2, 3, 4, 5) THEN DO;
+        IF ACD040 = 1 THEN Exposure = '2'; /* Other */
+        ELSE IF ACD040 = 5 THEN Exposure = '1'; /* English */
+        ELSE IF ACD040 IN (2, 3) THEN Exposure = '2'; /* Other */
+        ELSE IF ACD040 = 4 THEN Exposure = '1'; /* English */
+    END;
+    
+    /* Asian participants (ACD110) */
+    IF ACD110 IN (1, 2, 3, 4, 5) THEN DO;
+        IF ACD110 = 1 THEN Exposure = '2'; /* Other */
+        ELSE IF ACD110 = 5 THEN Exposure = '1'; /* English */
+        ELSE IF ACD110 IN (2, 3) THEN Exposure = '2'; /* Other */
+        ELSE IF ACD110 = 4 THEN Exposure = '1'; /* English */
+    END;
+    
+    /* Create the Depression variable */
+    IF DPQ020 = 0 THEN Depression = 'N';
+    ELSE Depression = 'Y';
+    
+	* Recategorizing INDFMIN2 (Annual Family Income) Categories based on 2017 US poverty line for 2, $16,240 */
+    LENGTH Income_Category $20; /* Defining the length of the new category variable */
+    IF INDFMIN2 IN (1, 2, 3, 4) THEN Income_Category = '$0-16,000'; /* Below or at poverty line */
+    ELSE IF INDFMIN2 IN (5, 6) THEN Income_Category = '$16,001-34,999'; /* Low income */
+    ELSE IF INDFMIN2 IN (7, 8) THEN Income_Category = '$35,000-54,999'; /* Lower middle income */
+    ELSE IF INDFMIN2 IN (9, 10) THEN Income_Category = '$55,000-74,999'; /* Middle income */
+    ELSE IF INDFMIN2 = 14 THEN Income_Category = '$75,000-99,000'; /* Middle upper income */
+    ELSE IF INDFMIN2 = 15 THEN Income_Category = '$100,000+'; /* Upper income */
+
+    /* Recategorizing ALQ130 (Average Alcohol Drinks Per Day) Categories based on CDC definitions */
+    if ALQ111 = 2 then Alcohol_Consumption = "Never Drinker"; /* Never had alcohol */
+    else if ALQ111 = 1 then do; 
+        /*former drinker*/
+        if ALQ121 = 0 then Alcohol_Consumption = "Former Drinker"; /* Never drank in the last year */
+   
+        /*moderate drinker: 3-4 times/week or 1-13 times in the past month */
+        else if ALQ121 in (3, 4, 5, 6, 7, 8, 9, 10) then do;
+            Alcohol_Consumption = "Moderate Drinker";
+        end;
+
+        /*heavy drinker: 2+ drinks/day for more than three days */
+        else if ALQ130 >= 2 and (ALQ142 >=1 and ALQ142 <=6 or ALQ270 >= 1 and ALQ270 <=6) then do;
+            Alcohol_Consumption = "Heavy Drinker";
+        end;
+    end;
+
+    else Alcohol_Consumption = .; /* Handle missing values */
+run;
+
+
+
+
+proc freq data = rm.cleaned_data;
+tables DEPRESSION*EXPOSURE; run;
+
+proc freq data = rm.cleaned_data;
+tables DEPRESSION*DMDBORN4; run;
+
+PROC MEANS DATA=rm.cleaned_data;
+    CLASS DEPRESSION;
+    VAR RIDAGEYR;
+RUN;
+
+proc freq data = rm.cleaned_data;
+tables DEPRESSION*RIAGENDR; run;
+
+proc freq data = rm.cleaned_data;
+tables DEPRESSION*Income_category; run;
+
+proc freq data = rm.cleaned_data;
+tables DEPRESSION*DMDHREDZ; run;
+
+proc freq data = rm.cleaned_data;
+tables DEPRESSION*DMDYRSUS; run;
+
+proc freq data = rm.cleaned_data;
+tables DEPRESSION*DMDHRMAZ; run;
+
+proc freq data = rm.cleaned_data;
+tables DEPRESSION*housesize; run;
+
+proc freq data = rm.cleaned_data;
+tables DEPRESSION*HUQ030; run;
+
+proc freq data = rm.cleaned_data;
+tables DEPRESSION*HIQ011; run;
+
+proc freq data = rm.cleaned_data;
+tables DEPRESSION*DUQ240; run;
+
+proc freq data = rm.cleaned_data;
+tables DEPRESSION*alcohol_consumption; run;
+
+proc freq data = rm.cleaned_data;
+tables DEPRESSION*HSD010; run;
+
+
+
+/* Continuous Variables: Using PROC MEANS for age*/
+PROC MEANS DATA=rm.cleaned_data N MEAN STD MIN MAX;
+    VAR RIDAGEYR; /* Age */
+RUN;
+
+
+/*STATISTICAL ANALYSIS*/
+/*unadjusted*/
+proc logistic data=rm.cleaned_data;
+    class Exposure (ref='1')/*English language*/ / param=ref;
+    model Depression(event='Y') = Exposure / CLODDS=WALD; run;
+
+
+/*adjusted: age, sex, income level, education level, access to care, length of time in the US, health ins status*/
+proc logistic data=rm.cleaned_data;
+    class Exposure (ref='1')/*English language*/ RIAGENDR (ref = '1') /*Male*/
+income_category DMDHREDZ (ref = '2') /*HS/GED or some college*/
+HUQ030 (ref = '1') /*has routine HC place*/ DMDYRSUS (ref = '5') /*15 - 20 years in US*/
+HIQ011 (ref = '1') /*has health ins*// param=ref;
+    model Depression(event='Y') = Exposure RIDAGEYR RIAGENDR income_category DMDHREDZ HUQ030 DMDYRSUS HIQ011 
+/ CLODDS=WALD; run;
+
+
